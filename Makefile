@@ -4,10 +4,10 @@ FLAGS = -Wall -Wextra
 all: client server
 
 client: $(BUILDDIR)
-	gcc $(FLAGS) client.cpp -o $(BUILDDIR)/client -lwayland-client
+	gcc -o $(BUILDDIR)/client $(FLAGS) client.cpp -lwayland-client
 
 server: $(BUILDDIR)
-	gcc $(FLAGS) server.cpp -o $(BUILDDIR)/server -lwayland-server
+	gcc -o $(BUILDDIR)/server $(FLAGS) server.cpp -lwayland-server
 
 $(BUILDDIR):
 	mkdir $(BUILDDIR)
