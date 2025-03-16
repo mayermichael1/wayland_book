@@ -1,18 +1,35 @@
 #include <stdio.h>
 #include <wayland-client.h>
+#include <string.h>
 
 #include "include/types.h"
+
+struct client_state
+{
+    wl_compositor *compositor;
+    wl_shm *shm;
+};
 
 static void 
 registry_handle_global(void *data, wl_registry *registry, u32 name, const char *interface, u32 version)
 {
-    (void)data;
-    (void)registry;
+    client_state *state = (client_state*)data;
+
+    if (strcmp(interface, wl_compositor_interface.name) == 0)
+    {
+        state->compositor = (wl_compositor*)wl_registry_bind(registry, name, &wl_compositor_interface, 4);    
+    }
+    else if(strcmp(interface, wl_shm_interface.name) == 0)
+    {
+        state->shm = (wl_shm*)wl_registry_bind(registry, name, &wl_shm_interface, 1);
+    }
+    /*
     fprintf(stdout, "interface: \%s\(v: %d, name: %d)\n", 
         interface,
         version,
         name
     );
+    */
 }
 
 static void
@@ -59,7 +76,8 @@ main (int argc, char *argv[])
     if(registry)
     {
         fprintf(stderr, "Connection established!\n");
-        wl_registry_add_listener(registry, &registry_listener, NULL);
+        client_state state = {};
+        wl_registry_add_listener(registry, &registry_listener, &state);
         wl_display_roundtrip(display);
         wl_display_disconnect(display);
     }
