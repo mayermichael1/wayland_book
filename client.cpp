@@ -2,10 +2,21 @@
 #include <wayland-client.h>
 
 int 
-main ()
+main (int argc, char *argv[])
 {
     int return_code = 0;
-    struct wl_display *display = wl_display_connect(NULL);
+    struct wl_display *display = NULL;
+    char *display_name = NULL;
+
+    if (argc >= 2)
+    {
+        display_name = argv[1];
+    }
+
+    if (display_name != NULL)
+    {
+        display = wl_display_connect(display_name);
+    }
 
     if (display)
     {
