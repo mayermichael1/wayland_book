@@ -1,0 +1,16 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-o",
+      "out/client",
+      "client.cpp"
+    ],
+    "directory": "/home/michael/Documents/Work/Projects/Learning/wayland_book",
+    "file": "/home/michael/Documents/Work/Projects/Learning/wayland_book/client.cpp",
+    "output": "/home/michael/Documents/Work/Projects/Learning/wayland_book/out/client"
+  }
+]
