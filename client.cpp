@@ -1,11 +1,51 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <wayland-client.h>
+
+typedef uint8_t     u8;
+typedef int8_t      s8;
+typedef uint16_t    u16;
+typedef int16_t     s16;
+typedef uint32_t    u32;
+typedef int32_t     s32;
+typedef uint64_t    u64;
+typedef int64_t     s64;
+
+typedef float       f32;
+typedef double      f64;
+
+static void 
+registry_handle_global(void *data, wl_registry *registry, u32 name, const char *interface, u32 version)
+{
+    (void)data;
+    (void)registry;
+    fprintf(stdout, "interface: \%s\(v: %d, name: %d)\n", 
+        interface,
+        version,
+        name
+    );
+}
+
+static void
+registry_handle_global_remove(void *data, wl_registry *registry, u32 name)
+{
+    (void)data;
+    (void)registry;
+    (void)name;
+}
+
+static wl_registry_listener registry_listener =
+{
+    .global = registry_handle_global,
+    .global_remove = registry_handle_global_remove,
+};
 
 int 
 main (int argc, char *argv[])
 {
     int return_code = 0;
     struct wl_display *display = NULL;
+    struct wl_registry *registry = NULL;
     char *display_name = NULL;
 
     if (argc >= 2)
@@ -17,10 +57,21 @@ main (int argc, char *argv[])
     {
         display = wl_display_connect(display_name);
     }
+    else
+    {
+        display = wl_display_connect(NULL);
+    }
 
     if (display)
     {
+        registry = wl_display_get_registry(display);
+    }
+
+    if(registry)
+    {
         fprintf(stderr, "Connection established!\n");
+        wl_registry_add_listener(registry, &registry_listener, NULL);
+        wl_display_roundtrip(display);
         wl_display_disconnect(display);
     }
     else
