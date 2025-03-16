@@ -5,7 +5,7 @@ DEBUG = -O0 -g
 all: client server
 
 client: $(BUILDDIR)
-	gcc -o $(BUILDDIR)/client $(FLAGS) $(DEBUG)  client.cpp -lwayland-client
+	cc -o $(BUILDDIR)/client client.cpp -lwayland-client -lrt
 
 server: $(BUILDDIR)
 	gcc -o $(BUILDDIR)/server $(FLAGS) $(DEBUG) server.cpp -lwayland-server
