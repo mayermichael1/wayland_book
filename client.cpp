@@ -46,22 +46,40 @@ draw_frame(client_state *state)
         return NULL;
     }
 
-    uint32_t *data = (uint32_t*)mmap(NULL, size,
-            PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) {
+    u32 *data = (u32*)mmap(
+        NULL,
+        size,
+        PROT_READ | PROT_WRITE,
+        MAP_SHARED,
+        fd,
+        0
+    );
+
+    if (data == MAP_FAILED)
+    {
         close(fd);
         return NULL;
     }
 
-    struct wl_shm_pool *pool = wl_shm_create_pool(state->wl_shm, fd, size);
-    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0,
-            width, height, stride, WL_SHM_FORMAT_XRGB8888);
-    wl_shm_pool_destroy(pool);
+    wl_shm_pool *pool = wl_shm_create_pool(state->wl_shm, fd, size);
+    wl_buffer *buffer = wl_shm_pool_create_buffer(
+        pool,
+        0,
+        width,
+        height,
+        stride,
+        WL_SHM_FORMAT_XRGB8888
+    );
+
+    //TODO: why is this destroyed and closed here
+    wl_shm_pool_destroy(pool); 
     close(fd);
 
     /* Draw checkerboxed background */
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
+    for (int y = 0; y < height; ++y) 
+    {
+        for (int x = 0; x < width; ++x) 
+        {
             if ((x + y / 8 * 8) % 16 < 8)
                 data[y * width + x] = 0xFF666666;
             else
