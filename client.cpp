@@ -21,6 +21,9 @@ struct client_state {
     struct wl_surface *wl_surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *xdg_toplevel;
+
+    f32 offset;
+    u32 last_frame;
 };
 
 static void
@@ -76,11 +79,12 @@ draw_frame(client_state *state)
     close(fd);
 
     /* Draw checkerboxed background */
+    int offset = (int)state->offset % 8;
     for (int y = 0; y < height; ++y) 
     {
         for (int x = 0; x < width; ++x) 
         {
-            if ((x + y / 8 * 8) % 16 < 8)
+            if (((x + offset) + ( y + offset) / 8 * 8) % 16 < 8)
                 data[y * width + x] = 0xFF666666;
             else
                 data[y * width + x] = 0xFFEEEEEE;
@@ -172,6 +176,38 @@ static wl_registry_listener wl_registry_listener = {
     .global_remove = registry_global_remove,
 };
 
+
+void
+wl_surface_frame_done(void *data, wl_callback *cb, u32);
+
+static wl_callback_listener wl_surface_frame_listener = 
+{
+    .done = wl_surface_frame_done,
+};
+
+void
+wl_surface_frame_done(void *data, wl_callback *cb, u32 time)
+{
+    client_state *state = (client_state*)data;
+    wl_callback_destroy(cb);
+
+    cb = wl_surface_frame(state->wl_surface);
+    wl_callback_add_listener(cb, &wl_surface_frame_listener, state);
+
+    if (state->last_frame != 0)
+    {
+        s32 elapsed = time - state->last_frame;
+        state->offset += elapsed / 1000.0 * 24;
+    }
+
+    wl_buffer *buffer = draw_frame(state);
+    wl_surface_attach(state->wl_surface, buffer, 0, 0);
+    wl_surface_damage(state->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
+    wl_surface_commit(state->wl_surface);
+
+    state->last_frame = time;
+}
+
 int
 main()
 {
@@ -191,6 +227,8 @@ main()
     xdg_toplevel_set_title(state.xdg_toplevel, "Example client");
     wl_surface_commit(state.wl_surface);
 
+    wl_callback *cb = wl_surface_frame(state.wl_surface);
+    wl_callback_add_listener(cb, &wl_surface_frame_listener, &state);
     while (wl_display_dispatch(state.wl_display)) 
     {
 
