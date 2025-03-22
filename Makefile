@@ -1,5 +1,5 @@
 BUILDDIR = out
-FLAGS = -Wall -Wextra
+FLAGS = -Wall -Wextra -Wno-changes-meaning
 DEBUG = -O0 -g
 
 all: client server
