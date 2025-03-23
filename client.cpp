@@ -2,12 +2,33 @@
 #include <stdbool.h>
 #include <string.h>
 #include <wayland-client.h>
+#include <stdio.h>
+#include <xkbcommon/xkbcommon.h>
+#include <assert.h>
 
 #include "include/xdg-shell-client-protocol.h"
 #include "include/types.h"
 
 #include "src/xdg-shell-protocol.c"
 #include "src/shm_alloc.cpp"
+
+struct pointer_event 
+{
+    u32 event_mask;
+    wl_fixed_t surface_x;
+    wl_fixed_t surface_y;
+    u32 button;
+    u32 state;
+    u32 time;
+    u32 serial;
+    struct
+    {
+        b8 valid;
+        wl_fixed_t value;
+        s32 discrete;
+    } axes[2];
+    u32 axis_source;
+};
 
 /* Wayland code */
 struct client_state {
@@ -17,13 +38,33 @@ struct client_state {
     wl_shm *wl_shm;
     wl_compositor *wl_compositor;
     xdg_wm_base *xdg_wm_base;
+    wl_seat *wl_seat;
     /* Objects */
     wl_surface *wl_surface;
     xdg_surface *xdg_surface;
     xdg_toplevel *xdg_toplevel;
+    wl_keyboard *wl_keyboard;
+    wl_pointer *wl_pointer;
+    wl_touch *wl_touch;
 
     f32 offset;
     u32 last_frame;
+    pointer_event pointer_event;
+    xkb_state *xkb_state;
+    xkb_context *xkb_context;
+    xkb_keymap *xkb_keymap;
+};
+
+enum pointer_event_mask 
+{
+    POINTER_EVENT_ENTER     = 1 << 0,
+    POINTER_EVENT_LEAVE     = 1 << 1,
+    POINTER_EVENT_MOTION    = 1 << 2,
+    POINTER_EVENT_BUTTON    = 1 << 3,
+    POINTER_EVENT_AXIS      = 1 << 4,
+    POINTER_EVENT_AXIS_SOURCE   = 1 << 5,
+    POINTER_EVENT_AXIS_STOP     = 1 << 6,
+    POINTER_EVENT_AXIS_DISCRETE = 1 << 7,
 };
 
 static void
@@ -123,6 +164,325 @@ static xdg_wm_base_listener xdg_wm_base_listener = {
 };
 
 void
+wl_pointer_enter(void *data, wl_pointer *wl_pointer, u32 serial,
+    wl_surface *surface, wl_fixed_t surface_x, wl_fixed_t surface_y)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_ENTER;
+    state->pointer_event.serial = serial;
+    state->pointer_event.surface_x = surface_x;
+    state->pointer_event.surface_y = surface_y;
+}
+void
+wl_pointer_leave(void *data, wl_pointer *wl_pointer, u32 serial, wl_surface *surface)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.serial = serial;
+    state->pointer_event.event_mask |= POINTER_EVENT_LEAVE;
+}
+
+void 
+wl_pointer_motion(void *data, wl_pointer *wl_pointer, u32 time,
+    wl_fixed_t surface_x, wl_fixed_t surface_y)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_MOTION;
+    state->pointer_event.time = time;
+    state->pointer_event.surface_x = surface_x;
+    state->pointer_event.surface_y = surface_y;
+}
+
+void
+wl_pointer_button(void *data, wl_pointer *wl_pointer, u32 serial, u32 time,
+    u32 button, u32 button_state)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_BUTTON;
+    state->pointer_event.time = time;
+    state->pointer_event.serial = serial;
+    state->pointer_event.button = button;
+    state->pointer_event.state = button_state;
+}
+
+void
+wl_pointer_axis(void *data, wl_pointer *wl_pointer, u32 time, u32 axis, wl_fixed_t value)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_AXIS;
+    state->pointer_event.time = time;
+    state->pointer_event.axes[axis].valid = true;
+    state->pointer_event.axes[axis].value = value;
+}
+
+void
+wl_pointer_axis_source(void *data, wl_pointer *wl_pointer, u32 axis_source)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_AXIS_SOURCE;
+    state->pointer_event.axis_source = axis_source;
+}
+
+void
+wl_pointer_axis_stop(void *data, wl_pointer *wl_pointer, u32 time, u32 axis)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_AXIS_STOP;
+    state->pointer_event.time = time;
+    state->pointer_event.axes[axis].valid = true;
+}
+
+void
+wl_pointer_axis_discrete(void *data, wl_pointer *wl_pointer, u32 axis, s32 discrete)
+{
+    client_state *state = (client_state*)data;
+    state->pointer_event.event_mask |= POINTER_EVENT_AXIS_DISCRETE;
+    state->pointer_event.axes[axis].valid = true;
+    state->pointer_event.axes[axis].discrete = discrete;
+}
+
+void
+wl_pointer_frame(void *data, wl_pointer *wl_pointer)
+{
+    client_state *state = (client_state*)data;
+    pointer_event *event = &state->pointer_event;
+    printf("\n\n\npointer frame @ %d :\n ", event->time);
+
+    if (event->event_mask & POINTER_EVENT_ENTER)
+    {
+        printf("entered %f, %f\n", 
+            wl_fixed_to_double(event->surface_x),
+            wl_fixed_to_double(event->surface_y)
+        );
+    }
+
+    if (event->event_mask & POINTER_EVENT_LEAVE)
+    {
+        printf("leave\n");
+    }
+
+    if (event->event_mask & POINTER_EVENT_MOTION)
+    {
+        printf("motion %f, %f\n", 
+            wl_fixed_to_double(event->surface_x),
+            wl_fixed_to_double(event->surface_y)
+        );
+    }
+
+    if (event->event_mask & POINTER_EVENT_BUTTON)
+    {
+        char *state = event->state == WL_POINTER_BUTTON_STATE_RELEASED
+             ? (char*)"released" : (char*)"pressed";
+
+        printf("button %d %s\n", event->button, state);
+    }
+
+    u32 axis_events = 
+        POINTER_EVENT_AXIS | 
+        POINTER_EVENT_AXIS_STOP |
+        POINTER_EVENT_AXIS_DISCRETE;
+
+    char *axis_name[2] = 
+    {
+        [WL_POINTER_AXIS_VERTICAL_SCROLL] = "vertical",
+        [WL_POINTER_AXIS_HORIZONTAL_SCROLL] = "horizontal",
+    };
+
+    char *axis_source[4] = 
+    {
+        [WL_POINTER_AXIS_SOURCE_WHEEL] = "wheel",
+        [WL_POINTER_AXIS_SOURCE_FINGER] = "finger",
+        [WL_POINTER_AXIS_SOURCE_CONTINUOUS] = "continuous",
+        [WL_POINTER_AXIS_SOURCE_WHEEL_TILT] = "wheel tilt",
+    };
+
+    if (event->event_mask & axis_events)
+    {
+        for (u8 i = 0; i < 2; ++i)
+        {
+            if (event->axes[i].valid)
+            {
+                printf("%s axis ", axis_name[i]);
+                if (event->event_mask & POINTER_EVENT_AXIS)
+                {
+                    printf("value %f ", wl_fixed_to_double(event->axes[i].value));
+                }
+                if (event->event_mask & POINTER_EVENT_AXIS_DISCRETE)
+                {
+                    printf("discrete %f ", wl_fixed_to_double(event->axes[i].discrete));
+                }
+                if (event->event_mask & POINTER_EVENT_AXIS_SOURCE)
+                {
+                    printf("via %s ", axis_source[event->axis_source]);
+                }
+                if (event->event_mask & POINTER_EVENT_AXIS_STOP)
+                {
+                    printf("stopped");
+                }
+                printf("\n");
+            }
+        }
+    }
+    printf("END FRAME\n");
+    memset(event, 0, sizeof(*event));
+
+}
+
+wl_pointer_listener wl_pointer_listener = 
+{
+    .enter = wl_pointer_enter,
+    .leave = wl_pointer_leave,
+    .motion = wl_pointer_motion,
+    .button = wl_pointer_button,
+    .axis = wl_pointer_axis,
+    .frame = wl_pointer_frame,
+    .axis_source = wl_pointer_axis_source,
+    .axis_stop = wl_pointer_axis_stop,
+    .axis_discrete = wl_pointer_axis_discrete,
+};
+
+void
+wl_keyboard_keymap(void *data, wl_keyboard *wl_keyboard, u32 format, s32 fd, u32 size)
+{
+    client_state *state = (client_state*)data;
+    assert(format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1);
+
+    u8 *map_shm = (u8*)mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+    assert(map_shm != MAP_FAILED);
+
+    xkb_keymap *xkb_keymap = xkb_keymap_new_from_string(
+        state->xkb_context,
+        (const char*)map_shm,
+        XKB_KEYMAP_FORMAT_TEXT_V1,
+        XKB_KEYMAP_COMPILE_NO_FLAGS
+    );
+    assert(xkb_keymap);
+    munmap(map_shm, size);
+    close(fd);
+
+    xkb_keymap_unref(state->xkb_keymap);
+    xkb_state_unref(state->xkb_state);
+
+    xkb_state *xkb_state = xkb_state_new(xkb_keymap);
+    assert(xkb_state);
+    state->xkb_keymap = xkb_keymap;
+    state->xkb_state = xkb_state;
+
+}
+
+void
+wl_keyboard_enter(void *data, wl_keyboard *wl_keyboard, u32 serial, wl_surface *surface, wl_array *keys)
+{
+    client_state *state = (client_state*)data;
+    printf("keyboard enter; keys pressed are:\n");
+
+    u32 *key;
+    wl_array_for_each(key, keys)
+    {
+        char buf[128];
+        xkb_keysym_t sym = xkb_state_key_get_one_sym( state->xkb_state, *key + 8);
+        xkb_keysym_get_name(sym, buf, sizeof(buf));
+        printf("sym: %-12s (%d),", buf, sym);
+        xkb_state_key_get_utf8(state->xkb_state, *key + 8, buf, sizeof(buf));
+        printf("utf8: '%s\n'", buf);
+    }
+}
+
+void
+wl_keyboard_leave(void *data, wl_keyboard *wl_keyboard, u32 serial, wl_surface *wl_surface)
+{
+    printf("keyboard leave\n");
+}
+
+void
+wl_keyboard_modifiers(void *data, wl_keyboard *wl_keyboard, u32 serial, u32 mods_depressed, u32 mods_latched, u32 mods_locked, u32 group)
+{
+    client_state *state = (client_state*)data;
+    xkb_state_update_mask(state->xkb_state, mods_depressed, mods_latched, mods_locked, 0, 0, group);
+}
+
+void
+wl_keyboard_repeat_info(void *data, wl_keyboard *wl_keyboard, s32 rate, s32 delay)
+{
+    // empty
+}
+
+void
+wl_keyboard_key(void *data, wl_keyboard *wl_keyboard, u32 serial, u32 time, u32 key, u32 key_state)
+{
+    client_state *state = (client_state*)data;
+
+    char buf[128];
+    u32 keycode = key + 8;
+
+    xkb_keysym_t sym = xkb_state_key_get_one_sym(state->xkb_state, keycode);
+    xkb_keysym_get_name(sym, buf, sizeof(buf));
+
+    u8 *action = key_state == WL_KEYBOARD_KEY_STATE_PRESSED ? (u8*)"press" : (u8*)"release";
+    printf("key %s: sym: %-12s (%d)", action, buf, sym);
+
+    xkb_state_key_get_utf8(state->xkb_state, keycode, buf, sizeof(buf));
+    printf("utf8: '%s'\n", buf);
+}
+wl_keyboard_listener wl_keyboard_listener = 
+{
+    .keymap = wl_keyboard_keymap,
+    .enter  = wl_keyboard_enter,
+    .leave  = wl_keyboard_leave,
+    .key    = wl_keyboard_key,
+    .modifiers = wl_keyboard_modifiers,
+    .repeat_info = wl_keyboard_repeat_info,
+};
+
+static void
+wl_seat_capabilities(void *data, wl_seat *wl_seat, u32 capabilities)
+{
+    client_state *state = (client_state*)data;
+    bool have_pointer = capabilities & WL_SEAT_CAPABILITY_POINTER;
+
+    if (have_pointer && state->wl_pointer == NULL)
+    {
+        state->wl_pointer = wl_seat_get_pointer(state->wl_seat); 
+        wl_pointer_add_listener(
+            state->wl_pointer,
+            &wl_pointer_listener,
+            state
+        );
+    }
+    else if (!have_pointer && state->wl_pointer != NULL)
+    {
+        wl_pointer_release(state->wl_pointer);
+        state->wl_pointer = NULL;
+    }
+
+    b8 have_keyboard = capabilities & WL_SEAT_CAPABILITY_KEYBOARD;
+
+    if (have_keyboard && state->wl_keyboard == NULL)
+    {
+       state->wl_keyboard = wl_seat_get_keyboard(state->wl_seat); 
+       wl_keyboard_add_listener(state->wl_keyboard, &wl_keyboard_listener, data);
+    }
+    else if (!have_keyboard && state->wl_keyboard != NULL)
+    {
+        wl_keyboard_release(state->wl_keyboard);
+        state->wl_keyboard = NULL;
+    }
+}
+
+static void
+wl_seat_name(void *data, wl_seat *wl_seat, const char *name)
+{
+    (void)data;
+    (void)wl_seat;
+    printf("seat name %s\n", name);
+}
+
+static wl_seat_listener wl_seat_listener = 
+{
+    .capabilities = wl_seat_capabilities,
+    .name = wl_seat_name,
+};
+
+void
 registry_global(void *data, wl_registry *wl_registry, u32 name, 
     const char *interface, u32 version)
 {
@@ -160,6 +520,16 @@ registry_global(void *data, wl_registry *wl_registry, u32 name,
             &xdg_wm_base_listener,
             state
         );
+    }
+    else if (strcmp(interface, wl_seat_interface.name) == 0)
+    {
+        state->wl_seat = (wl_seat*)wl_registry_bind(
+            wl_registry,
+            name, 
+            &wl_seat_interface,
+            7
+        );
+        wl_seat_add_listener(state->wl_seat, &wl_seat_listener, state);
     }
 }
 
@@ -214,6 +584,8 @@ main()
     client_state state = { };
     state.wl_display = wl_display_connect(NULL);
     state.wl_registry = wl_display_get_registry(state.wl_display);
+    state.xkb_context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    assert(state.xkb_context);
     wl_registry_add_listener(state.wl_registry, &wl_registry_listener, &state);
     wl_display_roundtrip(state.wl_display);
 
@@ -233,6 +605,5 @@ main()
     {
 
     }
-
     return 0;
 }
