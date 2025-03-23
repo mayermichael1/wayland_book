@@ -17,5 +17,9 @@ typedef double      f64;
 
 typedef bool        b8;
 
+#define internal        static
+#define global_variable static
+#define local_persist   static
+
 #endif
 
